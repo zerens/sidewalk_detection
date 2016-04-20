@@ -3,6 +3,7 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/Image.h>
+#include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/image_encodings.h>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -10,7 +11,10 @@
 #include <math.h>
 #include <vector>
 
-static const std::string OPENCV_WINDOW = "Image window";
+using namespace std;
+
+static const string OPENCV_WINDOW = "Image window";
+// static const std::string OPENCV_WINDOW = "Image window";
 static const double HEIGHT = 480.0;
 static const double WIDTH  = 640.0;
 
@@ -19,9 +23,14 @@ class ImageConverter {
     image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
     image_transport::Publisher image_pub_;
-    image_transport::Subscriber image_sub_depth_;
-    image_transport::Publisher image_pub_depth_in;
-    image_transport::Publisher image_pub_depth_out;
+
+    ros::Subscriber sub_depth; 
+    ros::Publisher pub_depth_in;
+    ros::Publisher pub_depth_out;
+
+    // image_transport::Subscriber image_sub_depth_;
+    // image_transport::Publisher image_pub_depth_in;
+    // image_transport::Publisher image_pub_depth_out;
 
     double lp_x1, lp_y1, lp_x2, lp_y2;
     double rp_x1, rp_y1, rp_x2, rp_y2;
@@ -31,7 +40,12 @@ class ImageConverter {
             // Subscrive to input video feed and publish output video feed
             image_sub_ = it_.subscribe( "/camera/color/image_raw", 1000, &ImageConverter::imageColorEdgeDetection, this );
             image_pub_ = it_.advertise( "/sidewalk_detector/color/image_raw", 1000 );
-            image_sub_depth_ = it_.subscribe( "/camera/depth/points", 1000, &ImageConverter::cloudVisual, this );
+
+            sub_depth = nh_.subscribe("/camera/depth/points", 1000, &ImageConverter::cloudVisual, this);
+            pub_depth_in = nh_.advertise<sensor_msgs::PointCloud2>("/sidewalk_detector/depth/points_in", 1000);
+            pub_depth_out = nh_.advertise<sensor_msgs::PointCloud2>("/sidewalk_detector/depth/points_out", 1000);
+
+            // image_sub_depth_ = it_.subscribe( "/camera/depth/points", 1000, &ImageConverter::cloudVisual, this );
             // image_pub_depth_in = it_.advertise( "/sidewalk_detector/depth/points_in", 1000 );
             // image_pub_depth_out = it_.advertise( "/sidewalk_detector/depth/points_out", 1000 );
             cv::namedWindow( OPENCV_WINDOW );
@@ -39,10 +53,6 @@ class ImageConverter {
     
         ~ImageConverter() {
             cv::destroyWindow( OPENCV_WINDOW );
-        }
-
-        void cloudVisual( const sensor_msgs::ImageConstPtr& msg ) {
-            
         }
 
         // imageColorEdgeDetection is using edge detection to detect the sidewalk
@@ -56,8 +66,6 @@ class ImageConverter {
                 ROS_ERROR( "cv_bridge exception: %s", e.what() );
                 return;
             }
-
-            cv::flip( cv_ptr->image, cv_ptr->image, -1 );
 
             cv::Mat kernel = (cv::Mat_<float>(3,3) <<
                 1,  1, 1,
@@ -77,18 +85,19 @@ class ImageConverter {
             cv::blur( gray, edge, cv::Size(5,5) );          
             cv::Canny( gray, edge, 50, 150, 3);
 
-            std::vector<cv::Vec4i> lines;
+            vector<cv::Vec4i> lines;
+            // std::vector<cv::Vec4i> lines;
             cv::HoughLinesP( edge, lines, 1, CV_PI/180, 80, 20, 10 );
-            double lp_x1, lp_y1, lp_x2, lp_y2;
-            double rp_x1, rp_y1, rp_x2, rp_y2;
+            // double lp_x1, lp_y1, lp_x2, lp_y2;
+            // double rp_x1, rp_y1, rp_x2, rp_y2;
             double lmin = WIDTH/2, rmax = WIDTH/2;
             for( size_t i = 0; i < lines.size(); i++ )
             {
                 // if (lines[i][2] == lines[i][0]) continue;
                 double alpha = atan2((lines[i][3]-lines[i][1]), (lines[i][2]-lines[i][0]));
-                double b = lines[i][3] - lines[i][2] * tan(alpha);             
+                double b = lines[i][3] - lines[i][2] * tan(alpha);           
                 if ( lines[i][0] > 540 && lines[i][2] > 540 ) { // right part
-                    if ( (alpha > 0.15*CV_PI/2) && (alpha < 0.85*CV_PI/2) ) {
+                    if ( (alpha < -0.15*CV_PI/2) && (alpha > -0.85*CV_PI/2) ) {
                         double x11, y11;
                         double x21 = (HEIGHT/2 - b) / tan(alpha);
                         double y21 = HEIGHT /2 ;
@@ -107,7 +116,7 @@ class ImageConverter {
                         }
                     }
                 } else if ( lines[i][0] < 100 && lines[i][2] < 100 ) { // left part
-                    if ( (alpha < -0.15*CV_PI/2) && (alpha > -0.85*CV_PI/2) ) {
+                    if ( (alpha > 0.15*CV_PI/2) && (alpha < 0.85*CV_PI/2) ) {
                         double x12, y12;
                         double x22 = (HEIGHT/2 - b) / tan(alpha);
                         double y22 = HEIGHT/2;
@@ -135,16 +144,50 @@ class ImageConverter {
             polygon[0][1] = cv::Point(lp_x2, lp_y2);
             polygon[0][2] = cv::Point(rp_x2, rp_y2);
             polygon[0][3] = cv::Point(WIDTH, rp_y1);
-            polygon[0][4] = cv::Point(WIDTH, HEIGHT);            
-            polygon[0][5] = cv::Point(0.0, HEIGHT);
+            polygon[0][4] = cv::Point(WIDTH, 0);            
+            polygon[0][5] = cv::Point(0.0, 0.0);
             const cv::Point* ppt[1] = { polygon[0] };
             int npt[] = { 6 };
             cv::fillPoly(cv_ptr->image, ppt, npt, 1, cv::Scalar(0,0,255));
 
+            cv::flip( cv_ptr->image, cv_ptr->image, -1 );
             cv::imshow(OPENCV_WINDOW, cv_ptr->image);
             cv::waitKey(3);
             // Output modified video stream
             image_pub_.publish( cv_ptr->toImageMsg() );
+        }
+
+        void cloudVisual( const sensor_msgs::PointCloud2ConstPtr& msg ) {
+            uint32_t rowstep = msg->row_step;
+            uint32_t height = msg->height;
+            sensor_msgs::PointCloud2 msg_in = *msg;
+            sensor_msgs::PointCloud2 msg_out = *msg;
+            for (uint64_t i = 0; i < rowstep * height; i++) {
+                if (inSideWalk(i, rowstep) == 1) {
+                    msg_in.data[i] = 0;
+                }
+            }
+            pub_depth_in.publish(msg_in);
+            for (uint64_t i = 0; i < rowstep * height; i++) {
+                if (inSideWalk(i, rowstep) == 0) {
+                    msg_out.data[i] = 0;
+                }
+            }
+            pub_depth_out.publish(msg_out);
+        }
+
+        int inSideWalk(uint64_t index, uint32_t rowstep) {
+            double alphal = atan2((lp_y2 - lp_y1), (lp_x2 - lp_x1));
+            double bl = lp_y2 - lp_x2 * tan(alphal);
+            double alphar = atan2((rp_y2 - rp_y1), (rp_x2 - rp_x1));
+            double br = rp_y2 - rp_x2 * tan(alphar);
+            uint32_t x = index % rowstep;
+            uint32_t y = index / rowstep;
+            if ( (y < lp_y2) && (y > 0) && (x < WIDTH) && (x > 0)
+                && (y < tan(alphal)*x + bl) && (y < tan(alphar)*x + br) ) {
+                return 1; // it means this point is in sidewalk
+            }
+            return 0; // it means this point is not in sidewalk
         }
 
         /* void imageDepthDetection( const sensor_msgs::ImageConstPtr& msg ) {
