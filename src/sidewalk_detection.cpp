@@ -175,7 +175,7 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
     }
 //     ROS_INFO("pcl_pc width is  %u, height is %u", pcl_pc.width, pcl_pc.height);
 //     ROS_INFO("cloud width is  %u, height is %u", cloud->width, cloud->height);
-//    ROS_INFO("index size is %lu, input size is %lu", inliers->indices.size(), cloud->points.size());
+//     ROS_INFO("index size is %lu, input size is %lu", inliers->indices.size(), cloud->points.size());
 
     extract_in.setInputCloud(cloud);
     extract_in.setIndices(inliers);
@@ -326,15 +326,15 @@ int main( int argc, char **args ) {
     // node : sidewalk_detection
     ros::init( argc, args, "sidewalk_detection" );
     ros::NodeHandle nh;
-    message_filters::Subscriber<sensor_msgs::Image> image_sub_(nh, "/camera/color/image_raw", 1);
-    message_filters::Subscriber<sensor_msgs::PointCloud2> sub_depth(nh, "/camera/depth/points", 1);
+    message_filters::Subscriber<sensor_msgs::Image> sub_image(nh, "/camera/color/image_raw", 1);
+    message_filters::Subscriber<sensor_msgs::PointCloud2> sub_points(nh, "/camera/depth/points", 1);
 
     image_pub_ = nh.advertise<sensor_msgs::Image>( "/sidewalk_detector/color/image_raw", 1 );
     pub_depth_in = nh.advertise<sensor_msgs::PointCloud2>("/sidewalk_detector/depth/points_in", 1);
     pub_depth_out = nh.advertise<sensor_msgs::PointCloud2>("/sidewalk_detector/depth/points_out", 1);
     typedef sync_policies::ExactTime<sensor_msgs::Image, sensor_msgs::PointCloud2> MySyncPolicy;
-    Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), image_sub_, sub_depth);
-    // TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(image_sub_, sub_depth, 10);
+    Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), sub_image, sub_points);
+    // TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(image_sub, sub_point, 10);
     sync.registerCallback(boost::bind(&imageColorEdgeDetection, _1, _2));
 
     ros::MultiThreadedSpinner spinner(10);
