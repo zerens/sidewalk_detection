@@ -11,6 +11,10 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   cv_bridge
   image_transport
+  message_filters
+  pcl_conversions
+  pcl
+  pcl_ros
 )
 
 ## System dependencies are found with CMake's conventions
