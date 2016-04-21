@@ -72,7 +72,7 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
 
     cv::Mat gray, edge;
     cv::cvtColor( imgResult, gray, CV_RGB2GRAY );
-    cv::blur( gray, edge, cv::Size(5,5) );          
+    // cv::blur( gray, edge, cv::Size(5,5) );          
     cv::Canny( gray, edge, 50, 150, 3);
 
     vector<cv::Vec4i> lines;
