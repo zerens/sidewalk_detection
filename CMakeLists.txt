@@ -13,13 +13,13 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   message_filters
   pcl_conversions
-  pcl
   pcl_ros
 )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
+find_package(PCL 1.7 REQUIRED)
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -193,7 +193,6 @@ include_directories(
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
-
 
 add_executable(sidewalk_detection src/sidewalk_detection.cpp)
 target_link_libraries(sidewalk_detection ${catkin_LIBRARIES})

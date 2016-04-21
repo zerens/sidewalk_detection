@@ -20,7 +20,9 @@
 #include <pcl/point_types.h>
 #include <pcl/PCLPointCloud2.h>
 #include <pcl/conversions.h>
+#include <pcl/PointIndices.h>
 #include <pcl_ros/transforms.h>
+#include <pcl/filters/extract_indices.h>
 
 #include <math.h>
 #include <vector>
@@ -147,40 +149,55 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
     sensor_msgs::PointCloud2 msg_in;
     sensor_msgs::PointCloud2 msg_out;
 
-    pcl::PCLPointCloud2 pcl_pc_in;
-    pcl::PCLPointCloud2 pcl_pc_out;
-    pcl_conversions::toPCL(*point_msg, pcl_pc_in);
-    pcl_conversions::toPCL(*point_msg, pcl_pc_out);
+    pcl::PCLPointCloud2 pcl_pc;
+    // pcl::PCLPointCloud2 pcl_pc;
+    // pcl::PCLPointCloud2 pcl_pc_in;
+    // pcl::PCLPointCloud2 pcl_pc_out;
+    pcl_conversions::toPCL(*point_msg, pcl_pc);
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::fromPCLPointCloud2(pcl_pc, *cloud);
 
     pcl::ExtractIndices<pcl::PointXYZRGB> extract_in;
     pcl::ExtractIndices<pcl::PointXYZRGB> extract_out;
 
-    extract_in.setInputCloud (cloud_filtered);
-    extract_in.setIndices (inliers);
-    extract_in.setNegative (false);
-    extract_in.filter (*cloud_p);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices ());
+    pcl::PointIndices::Ptr outliers(new pcl::PointIndices ());
 
-    pcl::fromPCLPointCloud2(pcl_pc, cloud);
-
-/*    uint32_t rowstep = point_msg->row_step;
-    uint32_t height = point_msg->height;
-    
-
-    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+    for (int i = 0; i < WIDTH * HEIGHT * 0.75 * 0.75; i++) {
         if (inSideWalk(i) == 1) {
-            msg_in.data[i] = 0;
-            msg_in.data[i] = 0;
-            msg_in.data[i] = 0;
+            inliers->indices.push_back(i);
         } else {
-            msg_out.data[i] = 0;
+            outliers->indices.push_back(i);
         }
     }
-*/ 
+//     ROS_INFO("pcl_pc width is  %u, height is %u", pcl_pc.width, pcl_pc.height);
+//     ROS_INFO("cloud width is  %u, height is %u", cloud->width, cloud->height);
+//    ROS_INFO("index size is %lu, input size is %lu", inliers->indices.size(), cloud->points.size());
+
+    extract_in.setInputCloud(cloud);
+    extract_in.setIndices(inliers);
+    extract_in.setNegative(false);
+    extract_in.filter(*cloud_in);
+
+    extract_out.setInputCloud(cloud);
+    extract_out.setIndices(outliers);
+    extract_out.setNegative(false);
+    extract_out.filter(*cloud_out);
+
+    pcl::toROSMsg(*cloud_in, msg_in);
+    pcl::toROSMsg(*cloud_out, msg_out);
+    // pcl_conversions::fromPCL(pcl_pc_in, msg_in);
+    // pcl_conversions::fromPCL(pcl_pc_out, msg_out);
+
     pub_depth_in.publish(msg_in);
     pub_depth_out.publish(msg_out);
 }
 
 int inSideWalk(int index) {
+    index = index / (0.75 * 0.75);
     double alphal = atan2((lp_y2 - lp_y1), (lp_x2 - lp_x1));
     double bl = lp_y2 - lp_x2 * tan(alphal);
     double alphar = atan2((rp_y2 - rp_y1), (rp_x2 - rp_x1));
