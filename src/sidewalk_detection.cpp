@@ -35,6 +35,10 @@ static const std::string OPENCV_WINDOW = "Image window";
 double HEIGHT = 480.0;
 double WIDTH  = 640.0;
 
+cv::Mat imageAcuting(cv_bridge::CvImagePtr cv_ptr);
+vector<cv::Vec4i> edgeLineDetection(cv::Mat img);
+void sidewalkEdgePicking(vector<cv::Vec4i> lines);
+cv_bridge::CvImagePtr showImageWithMark(cv_bridge::CvImagePtr cv_ptr);
 int inSideWalk(int index);
 void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg, const sensor_msgs::PointCloud2ConstPtr& point_msg );
 
@@ -57,6 +61,60 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
         ROS_ERROR( "cv_bridge exception: %s", e.what() );
         return;
     }
+
+    // acute the egde in the image
+    cv::Mat imgResult = imageAcuting(cv_ptr);
+    // detect the lines in the image
+    vector<cv::Vec4i> lines = edgeLineDetection(imgResult);
+    // choose the line which is most likely to be the sidewalk edge
+    sidewalkEdgePicking(lines);
+    // After filter, two line is obtained, represented by
+    // left : lp_x1, lp_y1, lp_x2, lp_y2;
+    // right: rp_x1, rp_y1, rp_x2, rp_y2;
+    cv_ptr = showImageWithMark(cv_ptr);
+    // publish processed image raw data
+    image_pub_.publish( cv_ptr->toImageMsg() );
+
+    // now deal with the point cloud
+    sensor_msgs::PointCloud2 msg_in;
+    sensor_msgs::PointCloud2 msg_out;
+    // convert form sensor_msgs::PointCloud2 to PCLPointCloud2
+    pcl::PCLPointCloud2 pcl_pc;
+    pcl_conversions::toPCL(*point_msg, pcl_pc);
+    // convert form PCLPointCloud2 to PCLPointCloud
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::fromPCLPointCloud2(pcl_pc, *cloud);
+
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract_in;
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract_out;
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices ());
+    pcl::PointIndices::Ptr outliers(new pcl::PointIndices ());
+    for (int i = 0; i < WIDTH * HEIGHT * 0.75 * 0.75; i++) {
+        if (inSideWalk(i) == 1) {
+            inliers->indices.push_back(i);
+        } else {
+            outliers->indices.push_back(i);
+        }
+    }
+    extract_in.setInputCloud(cloud);
+    extract_in.setIndices(inliers);
+    extract_in.setNegative(false);
+    extract_in.filter(*cloud_in);
+    extract_out.setInputCloud(cloud);
+    extract_out.setIndices(outliers);
+    extract_out.setNegative(false);
+    extract_out.filter(*cloud_out);
+    // // convert form PCLPointCloud to sensor_msgs::PointCloud2
+    pcl::toROSMsg(*cloud_in, msg_in);
+    pcl::toROSMsg(*cloud_out, msg_out);
+    // publich topic
+    pub_depth_in.publish(msg_in);
+    pub_depth_out.publish(msg_out);
+}
+
+cv::Mat imageAcuting(cv_bridge::CvImagePtr cv_ptr) {
     cv::Mat kernel = (cv::Mat_<float>(3,3) <<
         1,  1, 1,
         1, -8, 1,
@@ -69,16 +127,20 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
     cv::Mat imgResult = sharp - imgLaplacian;
     // convert back to 8bits gray scale
     imgResult.convertTo(imgResult, CV_8UC3);
+    return imgResult;
+}
 
+vector<cv::Vec4i> edgeLineDetection(cv::Mat img) {
     cv::Mat gray, edge;
-    cv::cvtColor( imgResult, gray, CV_RGB2GRAY );
+    cv::cvtColor( img, gray, CV_RGB2GRAY );
     // cv::blur( gray, edge, cv::Size(5,5) );          
     cv::Canny( gray, edge, 50, 150, 3);
-
     vector<cv::Vec4i> lines;
     cv::HoughLinesP( edge, lines, 1, CV_PI/180, 80, 20, 10 );
-    // double lp_x1, lp_y1, lp_x2, lp_y2;
-    // double rp_x1, rp_y1, rp_x2, rp_y2;
+    return lines;
+}
+
+void sidewalkEdgePicking(vector<cv::Vec4i> lines) {
     double lmin = WIDTH/2, rmax = WIDTH/2;
     for( size_t i = 0; i < lines.size(); i++ )
     {
@@ -125,9 +187,9 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
             }
         }
     }
-    // After filter, two line is obtained, represented by
-    // left : lp_x1, lp_y1, lp_x2, lp_y2;
-    // right: rp_x1, rp_y1, rp_x2, rp_y2;
+}
+
+cv_bridge::CvImagePtr showImageWithMark(cv_bridge::CvImagePtr cv_ptr) {
     cv::Point polygon[1][6];
     polygon[0][0] = cv::Point(0.0, lp_y1);
     polygon[0][1] = cv::Point(lp_x2, lp_y2);
@@ -142,58 +204,7 @@ void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
     cv::flip( cv_ptr->image, cv_ptr->image, -1 );
     cv::imshow(OPENCV_WINDOW, cv_ptr->image);
     cv::waitKey(1);
-    // Output modified video stream
-    image_pub_.publish( cv_ptr->toImageMsg() );
-
-    // now deal with the point cloud
-    sensor_msgs::PointCloud2 msg_in;
-    sensor_msgs::PointCloud2 msg_out;
-
-    pcl::PCLPointCloud2 pcl_pc;
-    // pcl::PCLPointCloud2 pcl_pc;
-    // pcl::PCLPointCloud2 pcl_pc_in;
-    // pcl::PCLPointCloud2 pcl_pc_out;
-    pcl_conversions::toPCL(*point_msg, pcl_pc);
-
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZRGB>);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZRGB>);
-    pcl::fromPCLPointCloud2(pcl_pc, *cloud);
-
-    pcl::ExtractIndices<pcl::PointXYZRGB> extract_in;
-    pcl::ExtractIndices<pcl::PointXYZRGB> extract_out;
-
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices ());
-    pcl::PointIndices::Ptr outliers(new pcl::PointIndices ());
-
-    for (int i = 0; i < WIDTH * HEIGHT * 0.75 * 0.75; i++) {
-        if (inSideWalk(i) == 1) {
-            inliers->indices.push_back(i);
-        } else {
-            outliers->indices.push_back(i);
-        }
-    }
-//     ROS_INFO("pcl_pc width is  %u, height is %u", pcl_pc.width, pcl_pc.height);
-//     ROS_INFO("cloud width is  %u, height is %u", cloud->width, cloud->height);
-//     ROS_INFO("index size is %lu, input size is %lu", inliers->indices.size(), cloud->points.size());
-
-    extract_in.setInputCloud(cloud);
-    extract_in.setIndices(inliers);
-    extract_in.setNegative(false);
-    extract_in.filter(*cloud_in);
-
-    extract_out.setInputCloud(cloud);
-    extract_out.setIndices(outliers);
-    extract_out.setNegative(false);
-    extract_out.filter(*cloud_out);
-
-    pcl::toROSMsg(*cloud_in, msg_in);
-    pcl::toROSMsg(*cloud_out, msg_out);
-    // pcl_conversions::fromPCL(pcl_pc_in, msg_in);
-    // pcl_conversions::fromPCL(pcl_pc_out, msg_out);
-
-    pub_depth_in.publish(msg_in);
-    pub_depth_out.publish(msg_out);
+    return cv_ptr;
 }
 
 int inSideWalk(int index) {
@@ -210,10 +221,6 @@ int inSideWalk(int index) {
     }
     return 0; // it means this point is not in sidewalk
 }
-
-    /* void imageDepthDetection( const sensor_msgs::ImageConstPtr& msg ) {
-
-    } */
 
 
         // imageSegment is using image segmentation to detect sidewalk
@@ -336,8 +343,8 @@ int main( int argc, char **args ) {
     Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), sub_image, sub_points);
     // TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(image_sub, sub_point, 10);
     sync.registerCallback(boost::bind(&imageColorEdgeDetection, _1, _2));
-
-    ros::MultiThreadedSpinner spinner(10);
-    spinner.spin();
+    ros::spin();
+    // ros::MultiThreadedSpinner spinner(4);
+    // spinner.spin();
     return 0;
 }
