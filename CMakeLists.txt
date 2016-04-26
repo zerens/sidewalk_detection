@@ -194,6 +194,6 @@ include_directories(
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
 
-add_executable(sidewalk_detection src/sidewalk_detection.cpp)
-target_link_libraries(sidewalk_detection ${catkin_LIBRARIES})
-add_dependencies(sidewalk_detection sidewalk_detection_generate_messages_cpp)
+add_executable(sidewalk_detector src/sidewalk_detector.cpp)
+target_link_libraries(sidewalk_detector ${catkin_LIBRARIES})
+add_dependencies(sidewalk_detector sidewalk_detection_generate_messages_cpp)

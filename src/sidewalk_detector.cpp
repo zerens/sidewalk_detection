@@ -23,6 +23,7 @@
 #include <pcl/PointIndices.h>
 #include <pcl_ros/transforms.h>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/segmentation/sac_segmentation.h>
 
 #include <math.h>
 #include <vector>
@@ -51,7 +52,7 @@ double rp_x1, rp_y1, rp_x2, rp_y2;
 
 // imageColorEdgeDetection is using edge detection to detect the sidewalk
 // the disadvantage is that if the edge is curve, it might not work well
-void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg, 
+void imageColorEdgeDetection( const sensor_msgs::ImageConstPtr& msg,
                               const sensor_msgs::PointCloud2ConstPtr& point_msg ) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
@@ -133,7 +134,7 @@ cv::Mat imageAcuting(cv_bridge::CvImagePtr cv_ptr) {
 vector<cv::Vec4i> edgeLineDetection(cv::Mat img) {
     cv::Mat gray, edge;
     cv::cvtColor( img, gray, CV_RGB2GRAY );
-    // cv::blur( gray, edge, cv::Size(5,5) );          
+    // cv::blur( gray, edge, cv::Size(5,5) );
     cv::Canny( gray, edge, 50, 150, 3);
     vector<cv::Vec4i> lines;
     cv::HoughLinesP( edge, lines, 1, CV_PI/180, 80, 20, 10 );
@@ -146,7 +147,7 @@ void sidewalkEdgePicking(vector<cv::Vec4i> lines) {
     {
         // if (lines[i][2] == lines[i][0]) continue;
         double alpha = atan2((lines[i][3]-lines[i][1]), (lines[i][2]-lines[i][0]));
-        double b = lines[i][3] - lines[i][2] * tan(alpha);           
+        double b = lines[i][3] - lines[i][2] * tan(alpha);
         if ( lines[i][0] > 540 && lines[i][2] > 540 ) { // right part
             if ( (alpha < -0.15*CV_PI/2) && (alpha > -0.85*CV_PI/2) ) {
                 double x11, y11;
@@ -195,7 +196,7 @@ cv_bridge::CvImagePtr showImageWithMark(cv_bridge::CvImagePtr cv_ptr) {
     polygon[0][1] = cv::Point(lp_x2, lp_y2);
     polygon[0][2] = cv::Point(rp_x2, rp_y2);
     polygon[0][3] = cv::Point(WIDTH, rp_y1);
-    polygon[0][4] = cv::Point(WIDTH, 0);            
+    polygon[0][4] = cv::Point(WIDTH, 0);
     polygon[0][5] = cv::Point(0.0, 0.0);
     const cv::Point* ppt[1] = { polygon[0] };
     int npt[] = { 6 };
@@ -222,6 +223,83 @@ int inSideWalk(int index) {
     return 0; // it means this point is not in sidewalk
 }
 
+void planarSegmentation( const sensor_msgs::ImageConstPtr& msg,
+                         const sensor_msgs::PointCloud2ConstPtr& point_msg ) {
+    // now deal with the point cloud
+    sensor_msgs::PointCloud2 msg_in;
+    sensor_msgs::PointCloud2 msg_out;
+    // convert form sensor_msgs::PointCloud2 to PCLPointCloud2
+    pcl::PCLPointCloud2 pcl_pc;
+    pcl_conversions::toPCL(*point_msg, pcl_pc);
+    // convert form PCLPointCloud2 to PCLPointCloud
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::fromPCLPointCloud2(pcl_pc, *cloud);
+
+    pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients());
+
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract_in;
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract_out;
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices ());
+    pcl::PointIndices::Ptr outliers(new pcl::PointIndices ());
+
+    pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType (pcl::SACMODEL_PLANE);
+    seg.setMethodType (pcl::SAC_RANSAC);
+    seg.setMaxIterations (100);
+    seg.setDistanceThreshold (0.1);
+
+    int i = 0;
+    int n = (int) cloud->points.size();
+    while (cloud->points.size() > 0.5 * n) {
+        seg.setInputCloud(cloud);
+        seg.segment (*inliers, *coefficients);
+        if (inliers->indices.size () == 0)
+        {
+            std::cerr << "Could not estimate a planar model for the given dataset." << std::endl;
+            break;
+        }
+        // Extract the inliers
+        extract_in.setInputCloud (cloud);
+        extract_in.setIndices (inliers);
+        extract_in.setNegative (false);
+        extract_in.filter (*cloud_in);
+        // Create the filtering object
+        extract_in.setNegative (true);
+        extract_in.filter (*cloud_out);
+        cloud.swap (cloud_out);
+        i++;
+    }
+
+    // cv_bridge::CvImagePtr cv_ptr;
+    // try {
+    //     cv_ptr = cv_bridge::toCvCopy( msg, sensor_msgs::image_encodings::RGB8 );
+    // }
+    // catch ( cv_bridge::Exception& e ) {
+    //     ROS_ERROR( "cv_bridge exception: %s", e.what() );
+    //     return;
+    // }  
+    // for (int i = 0; i < inliers->indices.size(); i++) {
+    //     int index = (int) i/(0.75*0.75);
+    //     uint32_t x = (index) % (int)WIDTH;
+    //     uint32_t y = (index) / (int)WIDTH;
+    //     cv_ptr->image.at<cv::Vec3b>(x,y)[0]=255;
+    //     cv_ptr->image.at<cv::Vec3b>(x,y)[1]=0;
+    //     cv_ptr->image.at<cv::Vec3b>(x,y)[2]=0;
+    // }
+    // cv::flip( cv_ptr->image, cv_ptr->image, -1 );
+    // cv::imshow(OPENCV_WINDOW, cv_ptr->image);
+    // cv::waitKey(1);
+
+    // convert form PCLPointCloud to sensor_msgs::PointCloud2
+    pcl::toROSMsg(*cloud_in, msg_in);
+    pcl::toROSMsg(*cloud_out, msg_out);
+    // publich topic
+    pub_depth_in.publish(msg_in);
+    pub_depth_out.publish(msg_out);
+}
 
         // imageSegment is using image segmentation to detect sidewalk
         // now still not work well, still need to test
@@ -261,7 +339,7 @@ int inSideWalk(int index) {
             // cv::cvtColor(cv_ptr->image, bw, CV_RGB2GRAY);
             cv::threshold(bw, bw, 20, 120, CV_THRESH_BINARY | CV_THRESH_OTSU);
             // cv::imshow( OPENCV_WINDOW, bw );
-            
+
             // Perform the distance transform algorithm
             cv::Mat dist;
             cv::distanceTransform(bw, dist, CV_DIST_L2, 3);
@@ -323,15 +401,15 @@ int inSideWalk(int index) {
             // Visualize the final image
             imshow(OPENCV_WINDOW, dst);
 
-            // cv::imshow( OPENCV_WINDOW, cv_ptr->image );  
+            // cv::imshow( OPENCV_WINDOW, cv_ptr->image );
             cv::waitKey(3);
             image_pub_.publish( cv_ptr->toImageMsg() );
         }  */
 // };
 
 int main( int argc, char **args ) {
-    // node : sidewalk_detection
-    ros::init( argc, args, "sidewalk_detection" );
+    // node : sidewalk_detector
+    ros::init( argc, args, "sidewalk_detector" );
     ros::NodeHandle nh;
     message_filters::Subscriber<sensor_msgs::Image> sub_image(nh, "/camera/color/image_raw", 1);
     message_filters::Subscriber<sensor_msgs::PointCloud2> sub_points(nh, "/camera/depth/points", 1);
@@ -343,6 +421,8 @@ int main( int argc, char **args ) {
     Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), sub_image, sub_points);
     // TimeSynchronizer<sensor_msgs::Image, sensor_msgs::PointCloud2> sync(image_sub, sub_point, 10);
     sync.registerCallback(boost::bind(&imageColorEdgeDetection, _1, _2));
+    // sync.registerCallback(boost::bind(&planarSegmentation, _1, _2));
+
     ros::spin();
     // ros::MultiThreadedSpinner spinner(4);
     // spinner.spin();
